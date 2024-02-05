@@ -1,0 +1,95 @@
+from flask import Flask, render_template, redirect, url_for, flash,jsonify
+from flask_wtf import FlaskForm
+from wtforms import SubmitField
+import os
+import cv2
+import base64
+import face_recognition
+from io import BytesIO
+from models import db, User
+import numpy as np
+
+app = Flask(__name__)
+app.config['SECRET_KEY'] = 'your_secret_key'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///user_data.db'
+app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
+db.init_app(app)
+
+known_faces_folder = 'known_faces'
+uploads_folder = 'uploads'
+
+known_face_image_path = os.path.join(known_faces_folder, 'known_face.jpg')
+known_face_encoding = face_recognition.face_encodings(face_recognition.load_image_file(known_face_image_path))[0]
+
+class RegistrationForm(FlaskForm):
+    submit = SubmitField('Register')
+
+class LoginForm(FlaskForm):
+    submit = SubmitField('Login')
+
+def capture_photo():
+    cap = cv2.VideoCapture(0)
+    ret, frame = cap.read()
+    cap.release()
+
+    rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
+    _, buffer = cv2.imencode('.jpg', rgb_frame)
+    image_as_str = base64.b64encode(buffer).decode('utf-8')
+
+    return image_as_str
+
+def compare_face_encoding(saved_encoding, unknown_encoding):
+    results = face_recognition.compare_faces([saved_encoding], unknown_encoding)
+    return results[0]
+
+@app.route('/register', methods=['GET', 'POST'])
+def register():
+    form = RegistrationForm()
+
+    if form.validate_on_submit():
+        try:
+            new_user = User(photo_data=capture_photo(), face_encoding=known_face_encoding.tobytes())
+            db.session.add(new_user)
+            db.session.commit()
+
+            flash('Registration successful!', 'success')
+            return redirect(url_for('login'))
+        except Exception as e:
+            flash(str(e), 'danger')
+    print(f"Success")
+    return render_template('register.html', form=form)
+
+@app.route('/login', methods=['GET', 'POST'])
+def login():
+    form = LoginForm()
+
+    if form.validate_on_submit():
+        photo_data = capture_photo()
+        unknown_face_encoding = face_recognition.face_encodings(
+            face_recognition.load_image_file(BytesIO(base64.b64decode(photo_data)))
+        )
+
+        if not unknown_face_encoding:
+            flash('No face detected in the captured photo. Please try again.', 'danger')
+            return redirect(url_for('login'))
+
+        users = User.query.all()
+
+        for user in users:
+            saved_user_encoding = np.frombuffer(user.face_encoding) if user.face_encoding else None
+
+            if saved_user_encoding is not None:
+                result = compare_face_encoding(saved_user_encoding, unknown_face_encoding[0])
+
+                if result:
+                    flash('Login successful!', 'success')
+                    return jsonify(f"Success")
+
+        flash('Face not recognized. Please try again.', 'danger')
+    
+    return render_template('login.html', form=form)
+
+if __name__ == '__main__':
+    with app.app_context():
+        db.create_all()
+    app.run(debug=True)
