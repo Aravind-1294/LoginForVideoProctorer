@@ -30,6 +30,8 @@ class LoginForm(FlaskForm):
 def capture_photo():
     cap = cv2.VideoCapture(0)
     ret, frame = cap.read()
+    if not ret:
+        raise ValueError('Error finding the frame')
     cap.release()
 
     rgb_frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
