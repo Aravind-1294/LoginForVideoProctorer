@@ -1,4 +1,4 @@
-from flask import Flask, render_template, redirect, url_for, flash,jsonify
+from flask import Flask, render_template, redirect, url_for, flash,jsonify,session
 from flask_wtf import FlaskForm
 from wtforms import SubmitField
 import os
@@ -11,7 +11,7 @@ import numpy as np
 
 app = Flask(__name__)
 app.config['SECRET_KEY'] = 'your_secret_key'
-app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///user_data.db'
+app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///facerecog.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 db.init_app(app)
 
@@ -45,50 +45,90 @@ def compare_face_encoding(saved_encoding, unknown_encoding):
 @app.route('/register', methods=['GET', 'POST'])
 def register():
     form = RegistrationForm()
+    try:
+        if form.validate_on_submit():
+            # Capture the photo data and encode the face
+            photo_data = capture_photo()
+            unknown_face_encoding = face_recognition.face_encodings(
+                face_recognition.load_image_file(BytesIO(base64.b64decode(photo_data)))
+            )
 
-    if form.validate_on_submit():
-        try:
-            new_user = User(photo_data=capture_photo(), face_encoding=known_face_encoding.tobytes())
+            if not unknown_face_encoding:
+                flash('No face detected in the captured photo. Please try again.', 'danger')
+                return redirect(url_for('register'))
+
+            # Retrieve all users from the database
+            users = User.query.all()
+
+            for user in users:
+                # Retrieve the face encoding stored during registration
+                saved_user_encoding = np.frombuffer(user.face_encoding) if user.face_encoding else None
+
+                if saved_user_encoding is not None:
+                    # Compare the face encodings
+                    result = compare_face_encoding(saved_user_encoding, unknown_face_encoding[0])
+
+                    if result:
+                        flash('User already registered.', 'danger')
+                        return redirect(url_for('login'))
+
+            # If the user is not found in the database, register the new user
+            new_user = User(photo_data=photo_data, face_encoding=unknown_face_encoding[0].tobytes())
             db.session.add(new_user)
             db.session.commit()
 
             flash('Registration successful!', 'success')
             return redirect(url_for('login'))
-        except Exception as e:
-            flash(str(e), 'danger')
-    print(f"Success")
+    except Exception as e:
+        flash(f'Error occurred during registration: {str(e)}', 'danger')
+
     return render_template('register.html', form=form)
+
+
 
 @app.route('/login', methods=['GET', 'POST'])
 def login():
     form = LoginForm()
+    try:
+        if form.validate_on_submit():
+            print("in form")
+            photo_data = capture_photo()
+            unknown_face_encoding = face_recognition.face_encodings(
+                face_recognition.load_image_file(BytesIO(base64.b64decode(photo_data)))
+            )
 
-    if form.validate_on_submit():
-        photo_data = capture_photo()
-        unknown_face_encoding = face_recognition.face_encodings(
-            face_recognition.load_image_file(BytesIO(base64.b64decode(photo_data)))
-        )
+            if not unknown_face_encoding:
+                print("face not recognized")
+                flash('No face detected in the captured photo. Please try again.', 'danger')
+                return redirect(url_for('login'))
 
-        if not unknown_face_encoding:
-            flash('No face detected in the captured photo. Please try again.', 'danger')
-            return redirect(url_for('login'))
+            users = User.query.all()
 
-        users = User.query.all()
+            for user in users:
+                print("finding user")
+                saved_user_encoding = np.frombuffer(user.face_encoding) if user.face_encoding else None
 
-        for user in users:
-            saved_user_encoding = np.frombuffer(user.face_encoding) if user.face_encoding else None
+                if saved_user_encoding is not None:
+                    result = compare_face_encoding(saved_user_encoding, unknown_face_encoding[0])
 
-            if saved_user_encoding is not None:
-                result = compare_face_encoding(saved_user_encoding, unknown_face_encoding[0])
+                    if result:
+                        print("finding similarity")
+                        session['user_id'] = user.id  # Store the user's ID in the session
+                        flash('Login successful!', 'success')
+                        return jsonify(f'Logged in') # Redirect to the message toward after successful login
 
-                if result:
-                    flash('Login successful!', 'success')
-                    return jsonify(f"Success")
+            flash('Face not recognized. Please try again.', 'danger')
+    except Exception as e:
+        flash(f'An error occurred during login: {str(e)}', 'danger')
 
-        flash('Face not recognized. Please try again.', 'danger')
+    return render_template('login.html',form=form)
+
+@app.route('/logout')
+def logout():
+    session.pop('user_id',None)
+    flash(f'You have been logged out')
+    return redirect(url_for('login'))
     
-    return render_template('login.html', form=form)
-
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
