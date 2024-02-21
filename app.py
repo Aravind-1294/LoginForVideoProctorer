@@ -3,13 +3,18 @@ from flask_wtf import FlaskForm
 from wtforms import SubmitField
 import os
 import cv2
+import threading
 import base64
 import face_recognition
 from io import BytesIO
 from models import db, User
 import numpy as np
+import start
+import check
+
 
 app = Flask(__name__)
+global id
 app.config['SECRET_KEY'] = 'your_secret_key'
 app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///facerecog.db'
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -115,15 +120,25 @@ def login():
 
                     if result:
                         print("finding similarity")
-                        session['user_id'] = user.id  # Store the user's ID in the session
-                        flash('Login successful!', 'success')
-                        return jsonify(f'Logged in') # Redirect to the message toward after successful login
+                        session['user_id'] = user.id
+                        # flash('Login successful!', 'success')
+                        return render_template('start.html')
 
             flash('Face not recognized. Please try again.', 'danger')
+
     except Exception as e:
         flash(f'An error occurred during login: {str(e)}', 'danger')
 
     return render_template('login.html',form=form)
+
+@app.route('/start')
+def started():
+    start.start()
+    return "exam completed"
+
+@app.route('/finished')
+def finished():
+    return render_template('started.html')
 
 @app.route('/logout')
 def logout():
@@ -134,4 +149,5 @@ def logout():
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
+    print(id)
     app.run(debug=True)
